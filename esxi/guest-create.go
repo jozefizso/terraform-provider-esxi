@@ -1,12 +1,9 @@
 package esxi
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 )
@@ -20,8 +17,6 @@ func guestCREATE(c *Config, guest_name string, disk_store string,
 
 	var memsize, numvcpus, virthwver int
 	var boot_disk_vmdkPATH, remote_cmd, vmid, stdout, vmx_contents string
-	var osShellCmd, osShellCmdOpt string
-	var out bytes.Buffer
 	var err error
 	err = nil
 
@@ -199,25 +194,10 @@ func guestCREATE(c *Config, guest_name string, disk_store string,
 		ovf_cmd := fmt.Sprintf("ovftool --acceptAllEulas --noSSLVerify --X:useMacNaming=false "+
 			"-dm=%s --name='%s' --overwrite -ds='%s' %s '%s' '%s'", boot_disk_type, guest_name, disk_store, net_param, src_path, dst_path)
 
-		if runtime.GOOS == "windows" {
-			osShellCmd = "C:\\Windows\\System32\\cmd.exe"
-			osShellCmdOpt = "/c"
-			ovf_cmd = strings.Replace(ovf_cmd, "'", "", -1)
-		} else {
-			osShellCmd = "/bin/bash"
-			osShellCmdOpt = "-c"
-		}
-
-		cmd := exec.Command(osShellCmd, osShellCmdOpt, ovf_cmd)
-
-		log.Println("[guestCREATE] ovf_cmd: " + ovf_cmd)
-
-		cmd.Stdout = &out
-		err = cmd.Run()
-		log.Printf("[guestCREATE] ovftool output: %q\n", out.String())
+		_, err = runRemoteSshCommand(esxiSSHinfo, ovf_cmd, ovf_cmd)
 		if err != nil {
-			log.Printf("Failed, There was an ovftool Error: %s\n%s\n", out.String(), err.Error())
-			return "", fmt.Errorf("There was an ovftool Error: %s\n%s\n", out.String(), err.Error())
+			log.Printf("Failed to run ovftool on ESXi server: %s\n", err.Error())
+			return "", fmt.Errorf("There was an ovftool Error: %s\n", err.Error())
 		}
 
 	}
