@@ -6,6 +6,7 @@ import (
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
 	"log"
+	"net/url"
 	"strconv"
 )
 
@@ -160,7 +161,7 @@ func resourceGUEST() *schema.Resource {
 						"virtual_disk_id": &schema.Schema{
 							Type:     schema.TypeString,
 							Required: true,
-							ForceNew: true,
+							ForceNew: false,
 						},
 						"slot": &schema.Schema{
 							Type:        schema.TypeString,
@@ -179,6 +180,12 @@ func resourceGUEST() *schema.Resource {
 				Computed:    true,
 				Description: "Guest notes (annotation).",
 			},
+			"guestinfo": &schema.Schema{
+				Type:        schema.TypeMap,
+				Optional:    true,
+				Description: "pass data to VM",
+				ForceNew:    true,
+			},
 		},
 	}
 }
@@ -186,7 +193,9 @@ func resourceGUEST() *schema.Resource {
 func resourceGUESTCreate(d *schema.ResourceData, m interface{}) error {
 	c := m.(*Config)
 
-	var virtual_networks [4][3]string
+	log.Printf("[resourceGUESTCreate]\n")
+
+	var virtual_networks [10][3]string
 	var virtual_disks [60][2]string
 	var src_path string
 	var tmpint, i int
@@ -203,11 +212,13 @@ func resourceGUESTCreate(d *schema.ResourceData, m interface{}) error {
 	virthwver := d.Get("virthwver").(string)
 	guestos := d.Get("guestos").(string)
 	guest_shutdown_timeout := d.Get("guest_shutdown_timeout").(int)
-	guest_startup_timeout := d.Get("guest_startup_timeout").(int)
 	notes := d.Get("notes").(string)
+	power := d.Get("power").(string)
 
-	saved_boot_disk_type := boot_disk_type
-	saved_numvcpus := numvcpus
+	guestinfo, ok := d.Get("guestinfo").(map[string]interface{})
+	if !ok {
+		return errors.New("guestinfo is wrong type")
+	}
 
 	// Validations
 	if resource_pool_name == "ha-root-pool" {
@@ -215,7 +226,8 @@ func resourceGUESTCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	if clone_from_vm != "" {
-		src_path = fmt.Sprintf("vi://%s:%s@%s/%s", c.esxiUserName, c.esxiPassword, c.esxiHostName, clone_from_vm)
+		password := url.QueryEscape(c.esxiPassword)
+		src_path = fmt.Sprintf("vi://%s:%s@%s/%s", c.esxiUserName, password, c.esxiHostName, clone_from_vm)
 	} else if ovf_source != "" {
 		src_path = ovf_source
 	} else {
@@ -255,8 +267,8 @@ func resourceGUESTCreate(d *schema.ResourceData, m interface{}) error {
 
 	//  Validate lan adapters
 	lanAdaptersCount := d.Get("network_interfaces.#").(int)
-	if lanAdaptersCount > 3 {
-		lanAdaptersCount = 3
+	if lanAdaptersCount > 10 {
+		lanAdaptersCount = 10
 	}
 	for i = 0; i < lanAdaptersCount; i++ {
 		prefix := fmt.Sprintf("network_interfaces.%d.", i)
@@ -302,7 +314,7 @@ func resourceGUESTCreate(d *schema.ResourceData, m interface{}) error {
 
 	vmid, err := guestCREATE(c, guest_name, disk_store, src_path, resource_pool_name, memsize,
 		numvcpus, virthwver, guestos, boot_disk_type, boot_disk_size, virtual_networks,
-		virtual_disks, guest_shutdown_timeout, notes)
+		virtual_disks, guest_shutdown_timeout, notes, guestinfo)
 	if err != nil {
 		tmpint, _ = strconv.Atoi(vmid)
 		if tmpint > 0 {
@@ -314,70 +326,14 @@ func resourceGUESTCreate(d *schema.ResourceData, m interface{}) error {
 	//  set vmid
 	d.SetId(vmid)
 
-	_, err = guestPowerOn(c, vmid)
-	if err != nil {
-		return errors.New("Failed to power on.")
+	if power == "on" {
+		_, err = guestPowerOn(c, vmid)
+		if err != nil {
+			return errors.New("Failed to power on.")
+		}
 	}
 	d.Set("power", "on")
 
 	// Refresh
-	guest_name, disk_store, disk_size, boot_disk_type, resource_pool_name, memsize, numvcpus, virthwver, guestos, ip_address, virtual_networks, virtual_disks, power, notes, err := guestREAD(c, d.Id(), guest_startup_timeout)
-	if err != nil {
-		d.SetId("")
-		return nil
-	}
-
-	d.Set("guest_name", guest_name)
-	d.Set("disk_store", disk_store)
-	d.Set("disk_size", disk_size)
-	if boot_disk_type == "Unknown" || boot_disk_type == "" {
-		if saved_boot_disk_type != "" {
-			d.Set("boot_disk_type", saved_boot_disk_type)
-		}
-	} else {
-		d.Set("boot_disk_type", boot_disk_type)
-	}
-	d.Set("resource_pool_name", resource_pool_name)
-	d.Set("memsize", memsize)
-	if numvcpus != "" {
-		d.Set("numvcpus", numvcpus)
-	} else {
-		d.Set("numvcpus", saved_numvcpus)
-	}
-	d.Set("virthwver", virthwver)
-	d.Set("guestos", guestos)
-	d.Set("ip_address", ip_address)
-	d.Set("power", power)
-	d.Set("notes", notes)
-
-	// Do network interfaces
-	log.Printf("virtual_networks: %q\n", virtual_networks)
-	nics := make([]map[string]interface{}, 0, 1)
-
-	for nic := 0; nic < 3; nic++ {
-		if virtual_networks[nic][0] != "" {
-			out := make(map[string]interface{})
-			out["virtual_network"] = virtual_networks[nic][0]
-			out["mac_address"] = virtual_networks[nic][1]
-			out["nic_type"] = virtual_networks[nic][2]
-			nics = append(nics, out)
-		}
-	}
-	d.Set("network_interfaces", nics)
-
-	// Do virtual disks
-	log.Printf("virtual_disks: %q\n", virtual_disks)
-	vdisks := make([]map[string]interface{}, 0, 1)
-
-	for vdisk := 0; vdisk < 3; vdisk++ {
-		if virtual_disks[vdisk][0] != "" {
-			out := make(map[string]interface{})
-			out["virtual_disk_id"] = virtual_disks[vdisk][0]
-			out["slot"] = virtual_disks[vdisk][1]
-			vdisks = append(vdisks, out)
-		}
-	}
-	d.Set("virtual_disks", vdisks)
-
-	return nil
+	return resourceGUESTRead(d, m)
 }

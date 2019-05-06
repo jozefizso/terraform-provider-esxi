@@ -10,9 +10,9 @@ import (
 
 func resourceGUESTUpdate(d *schema.ResourceData, m interface{}) error {
 	c := m.(*Config)
-	log.Printf("[guestUPDATE]\n")
+	log.Printf("[resourceGUESTUpdate]\n")
 
-	var virtual_networks [4][3]string
+	var virtual_networks [10][3]string
 	var virtual_disks [60][2]string
 	var i int
 	var err error
@@ -28,8 +28,13 @@ func resourceGUESTUpdate(d *schema.ResourceData, m interface{}) error {
 	lanAdaptersCount := d.Get("network_interfaces.#").(int)
 	power := d.Get("power").(string)
 
-	if lanAdaptersCount > 3 {
-		lanAdaptersCount = 3
+	guestinfo, ok := d.Get("guestinfo").(map[string]interface{})
+	if !ok {
+		return errors.New("guestinfo is wrong type")
+	}
+
+	if lanAdaptersCount > 10 {
+		lanAdaptersCount = 10
 	}
 	for i := 0; i < lanAdaptersCount; i++ {
 		prefix := fmt.Sprintf("network_interfaces.%d.", i)
@@ -50,6 +55,12 @@ func resourceGUESTUpdate(d *schema.ResourceData, m interface{}) error {
 	if virtualDiskCount > 59 {
 		virtualDiskCount = 59
 	}
+
+	// Validate guestOS
+	if validateGuestOsType(guestos) == false {
+		return errors.New("Error: invalid guestos.  see https://github.com/josenk/vagrant-vmware-esxi/wiki/VMware-ESXi-6.5-guestOS-types")
+	}
+
 	for i = 0; i < virtualDiskCount; i++ {
 		prefix := fmt.Sprintf("virtual_disks.%d.", i)
 
@@ -80,7 +91,7 @@ func resourceGUESTUpdate(d *schema.ResourceData, m interface{}) error {
 	imemsize, _ := strconv.Atoi(memsize)
 	inumvcpus, _ := strconv.Atoi(numvcpus)
 	ivirthwver, _ := strconv.Atoi(virthwver)
-	err = updateVmx_contents(c, vmid, false, imemsize, inumvcpus, ivirthwver, guestos, virtual_networks, virtual_disks, notes)
+	err = updateVmx_contents(c, vmid, false, imemsize, inumvcpus, ivirthwver, guestos, virtual_networks, virtual_disks, notes, guestinfo)
 	if err != nil {
 		fmt.Println("Failed to update VMX file.")
 		return errors.New("Failed to update VMX file.")
@@ -105,5 +116,5 @@ func resourceGUESTUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	return err
+	return resourceGUESTRead(d, m)
 }

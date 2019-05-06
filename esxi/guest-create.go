@@ -3,6 +3,7 @@ package esxi
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -10,8 +11,10 @@ import (
 
 func guestCREATE(c *Config, guest_name string, disk_store string,
 	src_path string, resource_pool_name string, strmemsize string, strnumvcpus string, strvirthwver string, guestos string,
-	boot_disk_type string, boot_disk_size string, virtual_networks [4][3]string,
-	virtual_disks [60][2]string, guest_shutdown_timeout int, notes string) (string, error) {
+	boot_disk_type string, boot_disk_size string, virtual_networks [10][3]string,
+	virtual_disks [60][2]string, guest_shutdown_timeout int, notes string,
+	guestinfo map[string]interface{}) (string, error) {
+
 	esxiSSHinfo := SshConnectionStruct{c.esxiHostName, c.esxiHostPort, c.esxiUserName, c.esxiPassword}
 	log.Printf("[guestCREATE]\n")
 
@@ -184,7 +187,8 @@ func guestCREATE(c *Config, guest_name string, disk_store string,
 		if boot_disk_type == "zeroedthick" {
 			boot_disk_type = "thick"
 		}
-		dst_path := fmt.Sprintf("vi://%s:%s@%s/%s", c.esxiUserName, c.esxiPassword, c.esxiHostName, resource_pool_name)
+		password := url.QueryEscape(c.esxiPassword)
+		dst_path := fmt.Sprintf("vi://%s:%s@%s/%s", c.esxiUserName, password, c.esxiHostName, resource_pool_name)
 
 		net_param := ""
 		if (strings.HasSuffix(src_path, ".ova") || strings.HasSuffix(src_path, ".ovf")) && virtual_networks[0][0] != "" {
@@ -221,7 +225,7 @@ func guestCREATE(c *Config, guest_name string, disk_store string,
 	//
 	//  make updates to vmx file
 	//
-	err = updateVmx_contents(c, vmid, true, memsize, numvcpus, virthwver, guestos, virtual_networks, virtual_disks, notes)
+	err = updateVmx_contents(c, vmid, true, memsize, numvcpus, virthwver, guestos, virtual_networks, virtual_disks, notes, guestinfo)
 	if err != nil {
 		return vmid, err
 	}

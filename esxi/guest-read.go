@@ -18,7 +18,7 @@ func resourceGUESTRead(d *schema.ResourceData, m interface{}) error {
 
 	var power string
 
-	guest_name, disk_store, disk_size, boot_disk_type, resource_pool_name, memsize, numvcpus, virthwver, guestos, ip_address, virtual_networks, virtual_disks, power, notes, err := guestREAD(c, d.Id(), guest_startup_timeout)
+	guest_name, disk_store, disk_size, boot_disk_type, resource_pool_name, memsize, numvcpus, virthwver, guestos, ip_address, virtual_networks, virtual_disks, power, notes, guestinfo, err := guestREAD(c, d.Id(), guest_startup_timeout)
 	if err != nil || guest_name == "" {
 		d.SetId("")
 		return nil
@@ -38,12 +38,13 @@ func resourceGUESTRead(d *schema.ResourceData, m interface{}) error {
 	d.Set("ip_address", ip_address)
 	d.Set("power", power)
 	d.Set("notes", notes)
+	d.Set("guestinfo", guestinfo)
 
 	// Do network interfaces
 	log.Printf("virtual_networks: %q\n", virtual_networks)
 	nics := make([]map[string]interface{}, 0, 1)
 
-	for nic := 0; nic < 3; nic++ {
+	for nic := 0; nic < 10; nic++ {
 		if virtual_networks[nic][0] != "" {
 			out := make(map[string]interface{})
 			out["virtual_network"] = virtual_networks[nic][0]
@@ -71,7 +72,7 @@ func resourceGUESTRead(d *schema.ResourceData, m interface{}) error {
 	return nil
 }
 
-func guestREAD(c *Config, vmid string, guest_startup_timeout int) (string, string, string, string, string, string, string, string, string, string, [4][3]string, [60][2]string, string, string, error) {
+func guestREAD(c *Config, vmid string, guest_startup_timeout int) (string, string, string, string, string, string, string, string, string, string, [10][3]string, [60][2]string, string, string, map[string]interface{}, error) {
 	esxiSSHinfo := SshConnectionStruct{c.esxiHostName, c.esxiHostPort, c.esxiUserName, c.esxiPassword}
 	log.Println("[guestREAD]")
 
@@ -79,8 +80,9 @@ func guestREAD(c *Config, vmid string, guest_startup_timeout int) (string, strin
 	var dst_vmx_ds, dst_vmx, dst_vmx_file, vmx_contents, power string
 	var disk_size, vdiskindex int
 	var memsize, numvcpus, virthwver string
-	var virtual_networks [4][3]string
+	var virtual_networks [10][3]string
 	var virtual_disks [60][2]string
+	var guestinfo map[string]interface{}
 
 	r, _ := regexp.Compile("")
 
@@ -88,7 +90,7 @@ func guestREAD(c *Config, vmid string, guest_startup_timeout int) (string, strin
 	stdout, err := runRemoteSshCommand(esxiSSHinfo, remote_cmd, "Get Guest summary")
 
 	if strings.Contains(stdout, "Unable to find a VM corresponding") {
-		return "", "", "", "", "", "", "", "", "", "", virtual_networks, virtual_disks, "", "", nil
+		return "", "", "", "", "", "", "", "", "", "", virtual_networks, virtual_disks, "", "", nil, nil
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
@@ -139,7 +141,7 @@ func guestREAD(c *Config, vmid string, guest_startup_timeout int) (string, strin
 	vmx_contents, err = runRemoteSshCommand(esxiSSHinfo, remote_cmd, "read guest_name.vmx file")
 
 	// Used to keep track if a network interface is using static or generated macs.
-	var isGeneratedMAC [3]bool
+	var isGeneratedMAC [10]bool
 
 	//  Read vmx_contents line-by-line to get current settings.
 	vdiskindex = 0
@@ -240,6 +242,8 @@ func guestREAD(c *Config, vmid string, guest_startup_timeout int) (string, strin
 		}
 	}
 
+	parsed_vmx := ParseVMX(vmx_contents)
+
 	//  Get power state
 	log.Println("guestREAD: guestPowerGetState")
 	power = guestPowerGetState(c, vmid)
@@ -259,6 +263,15 @@ func guestREAD(c *Config, vmid string, guest_startup_timeout int) (string, strin
 	_, _, _, disk_size, virtual_disk_type, err = virtualDiskREAD(c, boot_disk_vmdkPATH)
 	str_disk_size := strconv.Itoa(disk_size)
 
+	// Get guestinfo value
+	guestinfo = make(map[string]interface{})
+	for key, value := range parsed_vmx {
+		if strings.Contains(key, "guestinfo") {
+			short_key := strings.Replace(key, "guestinfo.", "", -1)
+			guestinfo[short_key] = value
+		}
+	}
+
 	// return results
-	return guest_name, disk_store, str_disk_size, virtual_disk_type, resource_pool_name, memsize, numvcpus, virthwver, guestos, ip_address, virtual_networks, virtual_disks, power, notes, err
+	return guest_name, disk_store, str_disk_size, virtual_disk_type, resource_pool_name, memsize, numvcpus, virthwver, guestos, ip_address, virtual_networks, virtual_disks, power, notes, guestinfo, err
 }
